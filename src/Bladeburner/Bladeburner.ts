@@ -23,6 +23,7 @@ import { City } from "./City";
 import { Player } from "@player";
 import { Router } from "../ui/GameRoot";
 import { Page } from "../ui/Router";
+import { ConsoleHelpText } from "./data/Help";
 import { exceptionAlert } from "../utils/helpers/exceptionAlert";
 import { getRandomIntInclusive } from "../utils/helpers/getRandomIntInclusive";
 import { BladeburnerConstants } from "./data/Constants";
@@ -42,6 +43,7 @@ import { PartialRecord, createEnumKeyedRecord, getRecordEntries } from "../Types
 import { createContracts, loadContractsData } from "./data/Contracts";
 import { createOperations, loadOperationsData } from "./data/Operations";
 import { clampInteger, clampNumber } from "../utils/helpers/clampNumber";
+import { parseCommand } from "../Terminal/Parser";
 import { BlackOperations } from "./data/BlackOperations";
 import { GeneralActions } from "./data/GeneralActions";
 import { PlayerObject } from "../PersonObjects/Player/PlayerObject";
@@ -49,7 +51,6 @@ import { Sleeve } from "../PersonObjects/Sleeve/Sleeve";
 import { autoCompleteTypeShorthand } from "./utils/terminalShorthands";
 import { resolveTeamCasualties, type OperationTeam } from "./Actions/TeamCasualties";
 import { shuffleArray } from "../Infiltration/ui/BribeGame";
-import { executeCommands } from "./Console/Commands";
 
 export const BladeburnerPromise: PromisePair<number> = { promise: null, resolve: null };
 
@@ -171,7 +172,22 @@ export class Bladeburner implements OperationTeam {
   }
 
   executeConsoleCommands(commands: string): void {
-    executeCommands(commands, this);
+    try {
+      // Console History
+      if (this.consoleHistory[this.consoleHistory.length - 1] != commands) {
+        this.consoleHistory.push(commands);
+        if (this.consoleHistory.length > 50) {
+          this.consoleHistory.splice(0, 1);
+        }
+      }
+
+      const arrayOfCommands = commands.split(";");
+      for (let i = 0; i < arrayOfCommands.length; ++i) {
+        this.executeConsoleCommand(arrayOfCommands[i]);
+      }
+    } catch (e: unknown) {
+      exceptionAlert(e);
+    }
   }
 
   postToConsole(input: string, saveToLogs = true): void {
@@ -221,12 +237,289 @@ export class Bladeburner implements OperationTeam {
     this.storedCycles = clampInteger(this.storedCycles + numCycles, 0);
   }
 
+  executeStartConsoleCommand(args: string[]): void {
+    if (args.length !== 3) {
+      this.postToConsole("Invalid usage of 'start' console command: start [type] [name]");
+      this.postToConsole("Use 'help start' for more info");
+      return;
+    }
+    const type = args[1];
+    const name = args[2];
+    const action = this.getActionFromTypeAndName(type, name);
+    if (!action) {
+      this.postToConsole(`Invalid action type / name specified: type: ${type}, name: ${name}`);
+      return;
+    }
+    const attempt = this.startAction(action.id);
+    this.postToConsole(attempt.message);
+  }
+
   getSkillMultsDisplay(): string[] {
     const display: string[] = [];
     for (const [multName, mult] of getRecordEntries(this.skillMultipliers)) {
       display.push(`${multName}: x${formatBigNumber(mult)}`);
     }
     return display;
+  }
+
+  executeSkillConsoleCommand(args: string[]): void {
+    switch (args.length) {
+      case 1: {
+        // Display Skill Help Command
+        this.postToConsole("Invalid usage of 'skill' console command: skill [action] [name]");
+        this.postToConsole("Use 'help skill' for more info");
+        break;
+      }
+      case 2: {
+        if (args[1].toLowerCase() === "list") {
+          // List all skills and their level
+          this.postToConsole("Skills: ");
+          for (const skill of Object.values(Skills)) {
+            const skillLevel = this.getSkillLevel(skill.name);
+            this.postToConsole(`${skill.name}: Level ${formatNumberNoSuffix(skillLevel, 0)}\n\nEffects: `);
+          }
+          for (const logEntry of this.getSkillMultsDisplay()) this.postToConsole(logEntry);
+        } else {
+          this.postToConsole("Invalid usage of 'skill' console command: skill [action] [name]");
+          this.postToConsole("Use 'help skill' for more info");
+        }
+        break;
+      }
+      case 3: {
+        const skillName = args[2];
+        if (!getEnumHelper("BladeburnerSkillName").isMember(skillName)) {
+          this.postToConsole("Invalid skill name (Note that it is case-sensitive): " + skillName);
+          return;
+        }
+        const level = this.getSkillLevel(skillName);
+        if (args[1].toLowerCase() === "list") {
+          this.postToConsole(skillName + ": Level " + formatNumberNoSuffix(level));
+        } else if (args[1].toLowerCase() === "level") {
+          const attempt = this.upgradeSkill(skillName);
+          this.postToConsole(attempt.message);
+        } else {
+          this.postToConsole("Invalid usage of 'skill' console command: skill [action] [name]");
+          this.postToConsole("Use 'help skill' for more info");
+        }
+        break;
+      }
+      default: {
+        this.postToConsole("Invalid usage of 'skill' console command: skill [action] [name]");
+        this.postToConsole("Use 'help skill' for more info");
+        break;
+      }
+    }
+  }
+
+  executeLogConsoleCommand(args: string[]): void {
+    if (args.length < 3) {
+      this.postToConsole("Invalid usage of log command: log [enable/disable] [action/event]");
+      this.postToConsole("Use 'help log' for more details and examples");
+      return;
+    }
+
+    let flag = true;
+    if (args[1].toLowerCase().includes("d")) {
+      flag = false;
+    } // d for disable
+
+    switch (args[2].toLowerCase()) {
+      case "general":
+      case "gen":
+        this.logging.general = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for general actions");
+        break;
+      case "contract":
+      case "contracts":
+        this.logging.contracts = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for Contracts");
+        break;
+      case "ops":
+      case "op":
+      case "operations":
+      case "operation":
+        this.logging.ops = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for Operations");
+        break;
+      case "blackops":
+      case "blackop":
+      case "black operations":
+      case "black operation":
+        this.logging.blackops = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for BlackOps");
+        break;
+      case "event":
+      case "events":
+        this.logging.events = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for events");
+        break;
+      case "all":
+        this.logging.general = flag;
+        this.logging.contracts = flag;
+        this.logging.ops = flag;
+        this.logging.blackops = flag;
+        this.logging.events = flag;
+        this.log("Logging " + (flag ? "enabled" : "disabled") + " for everything");
+        break;
+      default:
+        this.postToConsole("Invalid action/event type specified: " + args[2]);
+        this.postToConsole(
+          "Examples of valid action/event identifiers are: [general, contracts, ops, blackops, events]",
+        );
+        break;
+    }
+  }
+
+  executeHelpConsoleCommand(args: string[]): void {
+    if (args.length === 1) {
+      for (const line of ConsoleHelpText.helpList) {
+        this.postToConsole(line);
+      }
+    } else {
+      for (let i = 1; i < args.length; ++i) {
+        if (!(args[i] in ConsoleHelpText)) continue;
+        const helpText = ConsoleHelpText[args[i]];
+        for (const line of helpText) {
+          this.postToConsole(line);
+        }
+      }
+    }
+  }
+
+  executeAutomateConsoleCommand(args: string[]): void {
+    if (args.length !== 2 && args.length !== 4) {
+      this.postToConsole(
+        "Invalid use of 'automate' command: automate [var] [val] [hi/low]. Use 'help automate' for more info",
+      );
+      return;
+    }
+
+    // Enable/Disable
+    if (args.length === 2) {
+      const flag = args[1];
+      if (flag.toLowerCase() === "status") {
+        this.postToConsole("Automation: " + (this.automateEnabled ? "enabled" : "disabled"));
+        this.postToConsole(
+          "When your stamina drops to " +
+            formatNumberNoSuffix(this.automateThreshLow, 0) +
+            ", you will automatically switch to " +
+            (this.automateActionLow?.name ?? "Idle") +
+            ". When your stamina recovers to " +
+            formatNumberNoSuffix(this.automateThreshHigh, 0) +
+            ", you will automatically " +
+            "switch to " +
+            (this.automateActionHigh?.name ?? "Idle") +
+            ".",
+        );
+      } else if (flag.toLowerCase().includes("en")) {
+        if (!this.automateActionLow || !this.automateActionHigh) {
+          return this.log("Failed to enable automation. Actions were not set");
+        }
+        this.automateEnabled = true;
+        this.log("Bladeburner automation enabled");
+      } else if (flag.toLowerCase().includes("d")) {
+        this.automateEnabled = false;
+        this.log("Bladeburner automation disabled");
+      } else {
+        this.log("Invalid argument for 'automate' console command: " + args[1]);
+      }
+      return;
+    }
+
+    // Set variables
+    if (args.length === 4) {
+      const type = args[1].toLowerCase(); // allows Action Type to be with or without capitalization.
+      const name = args[2];
+
+      let highLow = false; // True for high, false for low
+      if (args[3].toLowerCase().includes("hi")) {
+        highLow = true;
+      }
+
+      if (type === "stamina") {
+        // For stamina, the "name" variable is actually the stamina threshold
+        if (isNaN(parseFloat(name))) {
+          this.postToConsole("Invalid value specified for stamina threshold (must be numeric): " + name);
+        } else {
+          if (highLow) {
+            this.automateThreshHigh = Number(name);
+          } else {
+            this.automateThreshLow = Number(name);
+          }
+          this.log("Automate (" + (highLow ? "HIGH" : "LOW") + ") stamina threshold set to " + name);
+        }
+        return;
+      }
+
+      const actionId = autoCompleteTypeShorthand(type, name);
+
+      if (actionId === null) {
+        switch (type) {
+          case "general":
+          case "gen": {
+            this.postToConsole("Invalid General Action name specified: " + name);
+            return;
+          }
+          case "contract":
+          case "contracts": {
+            this.postToConsole("Invalid Contract name specified: " + name);
+            return;
+          }
+          case "ops":
+          case "op":
+          case "operations":
+          case "operation":
+            this.postToConsole("Invalid Operation name specified: " + name);
+            return;
+          default:
+            this.postToConsole("Invalid use of automate command.");
+            return;
+        }
+      }
+
+      if (highLow) {
+        this.automateActionHigh = actionId;
+      } else {
+        this.automateActionLow = actionId;
+      }
+      this.log("Automate (" + (highLow ? "HIGH" : "LOW") + ") action set to " + name);
+    }
+  }
+
+  executeConsoleCommand(command: string): void {
+    command = command.trim();
+    command = command.replace(/\s\s+/g, " "); // Replace all whitespace w/ a single space
+
+    const args = parseCommand(command).map(String);
+    if (args.length <= 0) return; // Log an error?
+
+    switch (args[0].toLowerCase()) {
+      case "automate":
+        this.executeAutomateConsoleCommand(args);
+        break;
+      case "clear":
+      case "cls":
+        this.clearConsole();
+        break;
+      case "help":
+        this.executeHelpConsoleCommand(args);
+        break;
+      case "log":
+        this.executeLogConsoleCommand(args);
+        break;
+      case "skill":
+        this.executeSkillConsoleCommand(args);
+        break;
+      case "start":
+        this.executeStartConsoleCommand(args);
+        break;
+      case "stop":
+        this.resetAction();
+        break;
+      default:
+        this.postToConsole("Invalid console command");
+        break;
+    }
   }
 
   triggerMigration(sourceCityName: CityName): void {
