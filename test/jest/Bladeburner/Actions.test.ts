@@ -1,14 +1,13 @@
 import type { Bladeburner } from "../../../src/Bladeburner/Bladeburner";
 import { PlayerObject } from "../../../src/PersonObjects/Player/PlayerObject";
 import { Player, setPlayer } from "@player";
-import { Contract, GeneralAction, Operation } from "../../../src/Bladeburner/Actions";
+import { BlackOperation, Contract, GeneralAction, Operation } from "../../../src/Bladeburner/Actions";
 import { BladeburnerContractName, BladeburnerGeneralActionName, BladeburnerOperationName, CrimeType } from "@enums";
 import { FormatsNeedToChange } from "../../../src/ui/formatNumber";
 import { CrimeWork } from "../../../src/Work/CrimeWork";
-import type { ActionIdentifier } from "../../../src/Bladeburner/Types";
-import type { Skills } from "../../../src/PersonObjects/Skills";
-
-type StatKey = keyof Skills;
+import type { Action, ActionIdentifier } from "../../../src/Bladeburner/Types";
+import type { Skills } from "@nsdefs";
+import { BlackOperations } from "../../../src/Bladeburner/data/BlackOperations";
 
 describe("Bladeburner Actions", () => {
   const Tracking = Contract.createId(BladeburnerContractName.Tracking);
@@ -40,20 +39,22 @@ describe("Bladeburner Actions", () => {
       expect(Player.money).toBeGreaterThan(moneyBefore);
     });
 
-    it.each(<StatKey[]>["strength", "dexterity", "defense", "dexterity"])(
-      "Operations provide combat skill XP: %s",
-      (stat: StatKey) => {
-        const statsBefore = Object.assign({}, Player.skills);
-        guaranteeSuccess(), start(Assassination), finish();
-        expect(Player.skills[stat]).toBeGreaterThan(statsBefore[stat]);
-      },
-    );
+    describe("provides skill EXP for influencing stats (weight > 0)", () => {
+      it.each(<[ActionIdentifier, keyof Skills][]>[...ActionIdWithIndividualStat(NonGeneralActions())])(
+        "%s -> %s",
+        (id: ActionIdentifier, stat: keyof Skills) => {
+          const before = Player.exp[stat];
+          guaranteeSuccess(), start(id), finish();
+          expect(Player.exp[stat]).toBeGreaterThan(before);
+        },
+      );
+    });
 
     describe("Recruitment", () => {
       it("provides charisma", () => {
-        const { charisma } = Player.skills;
+        const { charisma } = Player.exp;
         guaranteeSuccess(), start(Recruitment), finish();
-        expect(Player.skills.charisma).toBeGreaterThan(charisma);
+        expect(Player.exp.charisma).toBeGreaterThan(charisma);
       });
 
       it("hires team member", () => {
@@ -75,6 +76,7 @@ describe("Bladeburner Actions", () => {
 
   beforeEach(() => {
     setPlayer(new PlayerObject());
+    Player.sourceFiles.set(5, 3); // Need BN5 to receive Int EXP
     if (initBladeburner(Player)) {
       inst = Player.bladeburner;
       inst.clearConsole();
@@ -103,10 +105,27 @@ describe("Bladeburner Actions", () => {
   function start(id: ActionIdentifier) {
     const action = inst.getActionObject(id);
     if ("count" in action) action.count = 1;
+    if (id.type === "Black Operations") inst.numBlackOpsComplete = (<BlackOperation>action).n;
     inst.startAction(id);
   }
 
   function finish() {
     inst.processAction(ENOUGH_TIME_TO_FINISH_ACTION);
+  }
+
+  function* NonGeneralActions() {
+    if (!initBladeburner(Player)) return;
+
+    yield* Object.values(Player.bladeburner.contracts);
+    yield* Object.values(Player.bladeburner.operations);
+    yield* Object.values(BlackOperations);
+  }
+
+  function* ActionIdWithIndividualStat(actions: Iterable<Action>) {
+    for (const action of actions) {
+      yield* Object.entries(action.weights)
+        .filter(([__, value]) => value > 0)
+        .map(([stat]) => [action.id, stat]);
+    }
   }
 });
