@@ -25,10 +25,13 @@ describe("Bladeburner Actions", () => {
   const ENOUGH_TIME_TO_FINISH_ACTION = 1e5;
   const BASE_STAT_EXP = 1e6;
 
-  let inst: Bladeburner;
+  let bb: Bladeburner;
 
-  const instanceUsedForTestGeneration = new Bladeburner();
-  const CITIES = <CityName[]>Object.keys(instanceUsedForTestGeneration.cities);
+  const cities = <CityName[]>Object.keys(new Bladeburner().cities);
+
+  const contracts = Object.values(new Bladeburner().contracts);
+  const operations = Object.values(new Bladeburner().operations);
+  const nonGeneralActions = [contracts, operations, Object.values(BlackOperations)].flat();
 
   describe("Without Simulacrum", () => {
     it("Starting an action cancels player's work immediately", () => {
@@ -46,8 +49,8 @@ describe("Bladeburner Actions", () => {
       const Training = GeneralAction.createId(BladeburnerGeneralActionName.Training);
 
       it("increases max stamina", () => {
-        (before = inst.maxStamina), complete(Training);
-        expect(inst.maxStamina).toBeGreaterThan(before);
+        (before = bb.maxStamina), complete(Training);
+        expect(bb.maxStamina).toBeGreaterThan(before);
       });
 
       it.each(<(keyof Skills)[]>["strength", "dexterity", "agility"])("awards %s exp", (stat: keyof Skills) => {
@@ -65,8 +68,8 @@ describe("Bladeburner Actions", () => {
       });
 
       it("regains stamina", () => {
-        (inst.stamina = 0), complete(Regen);
-        expect(inst.stamina).toBeGreaterThan(0);
+        (bb.stamina = 0), complete(Regen);
+        expect(bb.stamina).toBeGreaterThan(0);
       });
     });
 
@@ -75,21 +78,21 @@ describe("Bladeburner Actions", () => {
 
       it("mildly reduces chaos in the current city", () => {
         let chaos;
-        allCitiesHighChaos(), ({ chaos } = inst.getCurrentCity()), complete(Diplomacy);
-        expect(inst.getCurrentCity().chaos).toBeGreaterThan(chaos * 0.9);
-        expect(inst.getCurrentCity().chaos).toBeLessThan(chaos);
+        allCitiesHighChaos(), ({ chaos } = bb.getCurrentCity()), complete(Diplomacy);
+        expect(bb.getCurrentCity().chaos).toBeGreaterThan(chaos * 0.9);
+        expect(bb.getCurrentCity().chaos).toBeLessThan(chaos);
       });
 
       it("effect scales significantly with player charisma", () => {
         Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
-        expect(inst.getCurrentCity().chaos).toBe(0);
+        expect(bb.getCurrentCity().chaos).toBe(0);
       });
 
       it("does NOT affect chaos in other cities", () => {
-        const otherCity = <CityName>CITIES.find((c) => c !== inst.getCurrentCity().name);
+        const otherCity = <CityName>cities.find((c) => c !== bb.getCurrentCity().name);
         /** Testing against a guaranteed 0-chaos level of charisma */
         Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
-        expect(inst.cities[otherCity].chaos).toBeGreaterThan(0);
+        expect(bb.cities[otherCity].chaos).toBeGreaterThan(0);
       });
     });
 
@@ -97,7 +100,7 @@ describe("Bladeburner Actions", () => {
       const Field = GeneralAction.createId(BladeburnerGeneralActionName.FieldAnalysis);
 
       it("improves population estimate", () => {
-        ({ pop, popEst: before } = inst.getCurrentCity()), complete(Field), ({ popEst: after } = inst.getCurrentCity());
+        ({ pop, popEst: before } = bb.getCurrentCity()), complete(Field), ({ popEst: after } = bb.getCurrentCity());
         expect(Math.abs(after - pop)).toBeLessThan(Math.abs(before - pop));
       });
 
@@ -107,8 +110,8 @@ describe("Bladeburner Actions", () => {
       });
 
       it("provides a minor increase in rank", () => {
-        ({ rank: before } = inst), complete(Field, forceSuccess);
-        expect(inst.rank).toBeGreaterThan(before);
+        ({ rank: before } = bb), complete(Field, forceSuccess);
+        expect(bb.rank).toBeGreaterThan(before);
       });
     });
 
@@ -116,8 +119,8 @@ describe("Bladeburner Actions", () => {
       "non-general actions increase rank",
       (id) => {
         it(`${id.type}`, () => {
-          (before = inst.rank), complete(id, forceSuccess);
-          expect(inst.rank).toBeGreaterThan(before);
+          (before = bb.rank), complete(id, forceSuccess);
+          expect(bb.rank).toBeGreaterThan(before);
         });
       },
     );
@@ -129,8 +132,8 @@ describe("Bladeburner Actions", () => {
         { major: SampleBlackOp, minor: SampleOperation },
         { major: SampleOperation, minor: SampleContract },
       ])("$major.type reward significantly more rank than $minor.type", ({ major, minor }) => {
-        (beforeMinor = inst.rank), complete(minor, forceSuccess), (minorGain = inst.rank - beforeMinor);
-        (beforeMajor = inst.rank), complete(major, forceSuccess), (majorGain = inst.rank - beforeMajor);
+        (beforeMinor = bb.rank), complete(minor, forceSuccess), (minorGain = bb.rank - beforeMinor);
+        (beforeMajor = bb.rank), complete(major, forceSuccess), (majorGain = bb.rank - beforeMajor);
         expect(majorGain).toBeGreaterThan(minorGain);
       });
     });
@@ -140,27 +143,33 @@ describe("Bladeburner Actions", () => {
       let chaos;
 
       it("generates available contracts", () => {
-        const { count } = inst.getActionObject(SampleContract);
+        const { count } = bb.getActionObject(SampleContract);
         complete(Incite, forceSuccess);
-        expect(inst.getActionObject(SampleContract).count).toBeGreaterThan(count);
+        expect(bb.getActionObject(SampleContract).count).toBeGreaterThan(count);
       });
 
       it("generates available operations", () => {
-        const { count } = inst.getActionObject(SampleOperation);
+        const { count } = bb.getActionObject(SampleOperation);
         complete(Incite, forceSuccess);
-        expect(inst.getActionObject(SampleOperation).count).toBeGreaterThan(count);
+        expect(bb.getActionObject(SampleOperation).count).toBeGreaterThan(count);
       });
 
-      /** Relates to all issues mentioned in PR-1586 */
-      it.each(CITIES)("SIGNIFICANTLY increases chaos in all cities when chaos is LOW: %s", (city: CityName) => {
-        ({ chaos } = inst.cities[city]), complete(Incite, forceSuccess);
-        expect(inst.cities[city].chaos).toBeGreaterThan(chaos * 2);
+      /** Relates to all issues mentioned in PR-1586:
+       * - changing chaos rate of incite violence
+       * - having chaos rate affect only one city
+       */
+      it.each(cities)("SIGNIFICANTLY increases chaos in all cities when chaos is LOW: %s", (city: CityName) => {
+        ({ chaos } = bb.cities[city]), complete(Incite, forceSuccess);
+        expect(bb.cities[city].chaos).toBeGreaterThan(chaos * 2);
       });
 
-      /** Relates to all issues mentioned in PR-1586 */
-      it.each(CITIES)("MILDLY increases chaos in all cities when chaos is HIGH: %s", (city: CityName) => {
-        allCitiesHighChaos(), ({ chaos } = inst.cities[city]), complete(Incite, forceSuccess);
-        expect(inst.cities[city].chaos).toBeGreaterThan(chaos * 1.05);
+      /** Relates to all issues mentioned in PR-1586:
+       * - changing chaos rate of incite violence
+       * - having chaos rate affect only one city
+       */
+      it.each(cities)("MILDLY increases chaos in all cities when chaos is HIGH: %s", (city: CityName) => {
+        allCitiesHighChaos(), ({ chaos } = bb.cities[city]), complete(Incite, forceSuccess);
+        expect(bb.cities[city].chaos).toBeGreaterThan(chaos * 1.05);
       });
     });
 
@@ -174,11 +183,11 @@ describe("Bladeburner Actions", () => {
 
       it("hires team member", () => {
         complete(Recruitment, forceSuccess);
-        expect(inst.teamSize).toBeGreaterThan(0);
+        expect(bb.teamSize).toBeGreaterThan(0);
       });
     });
 
-    describe.each([...actionId(contracts())])("$id.name", ({ id }) => {
+    describe.each(contracts.map(({ id }) => ({ id })))("$id.name", ({ id }) => {
       it("all contracts award money", () => {
         (before = Player.money), complete(id, forceSuccess);
         expect(Player.money).toBeGreaterThan(before);
@@ -187,7 +196,7 @@ describe("Bladeburner Actions", () => {
 
     /** Stat EXP check for all actions */
     /** Checking all of them to avoid regressions */
-    describe.each([...actionIdWithIndividualStat(nonGeneralActions())])("$id.name", ({ id, stat }) => {
+    describe.each(nonGeneralActions.flatMap(actionIdWithIndividualStat))("$id.name", ({ id, stat }) => {
       it(`awards ${stat} exp`, () => {
         (before = Player.exp[stat]), complete(id, forceSuccess);
         expect(Player.exp[stat]).toBeGreaterThan(before);
@@ -200,15 +209,15 @@ describe("Bladeburner Actions", () => {
 
     describe.each([SampleOperation, SampleBlackOp])("operations and black operations decrease rank", (id) => {
       it(`${id.type}`, () => {
-        (before = inst.rank), complete(id, forceFailure);
-        expect(inst.rank).toBeLessThan(before);
+        (before = bb.rank), complete(id, forceFailure);
+        expect(bb.rank).toBeLessThan(before);
       });
     });
   });
 
   it("have a minimum duration of 1 second", () => {
     complete(SampleContract);
-    expect(inst.actionTimeToComplete).toBeGreaterThanOrEqual(1);
+    expect(bb.actionTimeToComplete).toBeGreaterThanOrEqual(1);
   });
 
   beforeAll(() => {
@@ -223,8 +232,8 @@ describe("Bladeburner Actions", () => {
     Player.sourceFiles.set(5, 3);
 
     if (initBladeburner(Player)) {
-      inst = Player.bladeburner;
-      inst.clearConsole();
+      bb = Player.bladeburner;
+      bb.clearConsole();
     }
 
     basicStats();
@@ -236,30 +245,30 @@ describe("Bladeburner Actions", () => {
   }
 
   function basicStats() {
-    inst.rank = 1;
-    inst.changeRank(Player, 400e3);
+    bb.rank = 1;
+    bb.changeRank(Player, 400e3);
     Player.gainStrengthExp(BASE_STAT_EXP);
     Player.gainDefenseExp(BASE_STAT_EXP);
     Player.gainAgilityExp(BASE_STAT_EXP);
     Player.gainDexterityExp(BASE_STAT_EXP);
-    inst.calculateMaxStamina();
+    bb.calculateMaxStamina();
 
-    inst.stamina = inst.maxStamina;
+    bb.stamina = bb.maxStamina;
 
     resetCity();
   }
 
   function resetCity() {
-    inst.cities[inst.city].chaos = 0;
-    inst.cities[inst.city].comms = 100;
-    inst.cities[inst.city].pop = 1e9;
+    bb.cities[bb.city].chaos = 0;
+    bb.cities[bb.city].comms = 100;
+    bb.cities[bb.city].pop = 1e9;
 
     /** Disable random event */
-    inst.randomEventCounter = Infinity;
+    bb.randomEventCounter = Infinity;
   }
 
   function allCitiesHighChaos() {
-    for (const city of Object.values(inst.cities)) {
+    for (const city of Object.values(bb.cities)) {
       city.chaos = 1e12;
     }
   }
@@ -271,51 +280,31 @@ describe("Bladeburner Actions", () => {
   }
 
   function forceSuccess(id: ActionIdentifier) {
-    const action = inst.getActionObject(id);
+    const action = bb.getActionObject(id);
     const success = jest.spyOn(action, "getSuccessChance");
     success.mockReturnValueOnce(1);
   }
 
   function forceFailure() {
-    inst.stamina = 0;
+    bb.stamina = 0;
   }
 
   function start(id: ActionIdentifier) {
-    const action = inst.getActionObject(id);
+    const action = bb.getActionObject(id);
     if ("count" in action) action.count = 1;
     if (action.type === BladeburnerActionType.Operation) action.autoLevel = true;
-    if (id.type === "Black Operations") inst.numBlackOpsComplete = (<BlackOperation>action).n;
-    inst.startAction(id);
+    if (id.type === "Black Operations") bb.numBlackOpsComplete = (<BlackOperation>action).n;
+    bb.startAction(id);
   }
 
   function finish() {
-    inst.processAction(ENOUGH_TIME_TO_FINISH_ACTION);
-    inst.calculateMaxStamina();
+    bb.processAction(ENOUGH_TIME_TO_FINISH_ACTION);
+    bb.calculateMaxStamina();
   }
 
-  function* nonGeneralActions() {
-    yield* contracts();
-    yield* operations();
-    yield* Object.values(BlackOperations);
-  }
-
-  function* contracts() {
-    yield* Object.values(instanceUsedForTestGeneration.contracts);
-  }
-
-  function* operations() {
-    yield* Object.values(instanceUsedForTestGeneration.operations);
-  }
-
-  function* actionId(actions: Iterable<Action>) {
-    for (const action of actions) yield { id: action.id };
-  }
-
-  function* actionIdWithIndividualStat(actions: Iterable<Action>) {
-    for (const action of actions) {
-      yield* Object.entries(action.weights)
-        .filter(([__, value]) => value > 0)
-        .map(([stat]) => ({ id: action.id, stat } as { id: ActionIdentifier; stat: keyof Skills }));
-    }
+  function actionIdWithIndividualStat(action: Action) {
+    return Object.entries(action.weights)
+      .filter(([__, value]) => value > 0)
+      .map(([stat]) => ({ id: action.id, stat } as { id: ActionIdentifier; stat: keyof Skills }));
   }
 });
