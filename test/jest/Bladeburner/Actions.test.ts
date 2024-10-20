@@ -7,7 +7,6 @@ import {
   BladeburnerContractName,
   BladeburnerGeneralActionName,
   BladeburnerOperationName,
-  BladeburnerSkillName,
   CityName,
   CrimeType,
 } from "@enums";
@@ -22,31 +21,14 @@ describe("Bladeburner Actions", () => {
   const SampleGeneralAction = GeneralAction.createId(BladeburnerGeneralActionName.Diplomacy);
   const SampleOperation = Operation.createId(BladeburnerOperationName.Assassination);
   const SampleBlackOp = BlackOperations["Operation Centurion"].id;
-  const ENOUGH_TIME_TO_FINISH_ACTION = 1e5;
 
-  /** Why 1e14? The stat tests need to be able to detect an EXP change of cca. 0.01
-   * 1e14 is the last threshold where 1e14 + 0.01 > 1e14
-   *
-   * Bug? Coincidentally this also means that stat gains stop at that level unless
-   * exp multipliers play a significant role
-   *
-   * Example: 1e14 strength exp gives ~~831 strength skill without augs/modifiers
-   */
-  const HIGH_STAT_EXP = 1e14;
-  const LOW_STAT_EXP = 1e6;
+  const ENOUGH_TIME_TO_FINISH_ACTION = 1e5;
+  const BASE_STAT_EXP = 1e6;
 
   let inst: Bladeburner;
 
   const instanceUsedForTestGeneration = new Bladeburner();
   const CITIES = <CityName[]>Object.keys(instanceUsedForTestGeneration.cities);
-
-  /** All the tests depend on this assumption */
-  it("always succeeds with optimal stats, rank, stamina and city chaos levels", () => {
-    guaranteeSuccess(), complete(SampleOperation);
-    const action = inst.getActionObject(SampleOperation);
-    expect(action.getSuccessChance(inst, Player, { est: false })).toBe(1);
-    expect(action.successes).toBeGreaterThan(0);
-  });
 
   describe("Without Simulacrum", () => {
     it("Starting an action cancels player's work immediately", () => {
@@ -64,12 +46,12 @@ describe("Bladeburner Actions", () => {
       const Training = GeneralAction.createId(BladeburnerGeneralActionName.Training);
 
       it("increases max stamina", () => {
-        basicStats(), (before = inst.maxStamina), complete(Training);
+        (before = inst.maxStamina), complete(Training);
         expect(inst.maxStamina).toBeGreaterThan(before);
       });
 
       it.each(<(keyof Skills)[]>["strength", "dexterity", "agility"])("awards %s exp", (stat: keyof Skills) => {
-        guaranteeSuccess(), (before = Player.exp[stat]), complete(Training);
+        (before = Player.exp[stat]), complete(Training);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
     });
@@ -78,12 +60,12 @@ describe("Bladeburner Actions", () => {
       const Regen = GeneralAction.createId(BladeburnerGeneralActionName.HyperbolicRegen);
 
       it("heals the player", () => {
-        basicStats(), Player.takeDamage(Player.hp.max / 2), (before = Player.hp.current), complete(Regen);
+        Player.takeDamage(Player.hp.max / 2), (before = Player.hp.current), complete(Regen);
         expect(Player.hp.current).toBeGreaterThan(before);
       });
 
       it("regains stamina", () => {
-        basicStats(), (inst.stamina = 0), complete(Regen);
+        (inst.stamina = 0), complete(Regen);
         expect(inst.stamina).toBeGreaterThan(0);
       });
     });
@@ -93,20 +75,20 @@ describe("Bladeburner Actions", () => {
 
       it("mildly reduces chaos in the current city", () => {
         let chaos;
-        basicStats(), allCitiesHighChaos(), ({ chaos } = inst.getCurrentCity()), complete(Diplomacy);
+        allCitiesHighChaos(), ({ chaos } = inst.getCurrentCity()), complete(Diplomacy);
         expect(inst.getCurrentCity().chaos).toBeGreaterThan(chaos * 0.9);
         expect(inst.getCurrentCity().chaos).toBeLessThan(chaos);
       });
 
       it("effect scales significantly with player charisma", () => {
-        basicStats(), Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
+        Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
         expect(inst.getCurrentCity().chaos).toBe(0);
       });
 
       it("does NOT affect chaos in other cities", () => {
         const otherCity = <CityName>CITIES.find((c) => c !== inst.getCurrentCity().name);
         /** Testing against a guaranteed 0-chaos level of charisma */
-        basicStats(), Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
+        Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(Diplomacy);
         expect(inst.cities[otherCity].chaos).toBeGreaterThan(0);
       });
     });
@@ -115,21 +97,17 @@ describe("Bladeburner Actions", () => {
       const Field = GeneralAction.createId(BladeburnerGeneralActionName.FieldAnalysis);
 
       it("improves population estimate", () => {
-        basicStats(),
-          ({ pop, popEst: before } = inst.getCurrentCity()),
-          complete(Field),
-          finish(),
-          ({ popEst: after } = inst.getCurrentCity());
+        ({ pop, popEst: before } = inst.getCurrentCity()), complete(Field), ({ popEst: after } = inst.getCurrentCity());
         expect(Math.abs(after - pop)).toBeLessThan(Math.abs(before - pop));
       });
 
       it.each(<(keyof Skills)[]>["hacking", "charisma"])("awards %s exp", (stat: keyof Skills) => {
-        basicStats(), (before = Player.exp[stat]), complete(Field);
+        (before = Player.exp[stat]), complete(Field, forceSuccess);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
 
       it("provides a minor increase in rank", () => {
-        basicStats(), ({ rank: before } = inst), complete(Field);
+        ({ rank: before } = inst), complete(Field, forceSuccess);
         expect(inst.rank).toBeGreaterThan(before);
       });
     });
@@ -138,7 +116,7 @@ describe("Bladeburner Actions", () => {
       "non-general actions increase rank",
       (id) => {
         it(`${id.type}`, () => {
-          guaranteeSuccess(), (before = inst.rank), complete(id);
+          (before = inst.rank), complete(id, forceSuccess);
           expect(inst.rank).toBeGreaterThan(before);
         });
       },
@@ -151,8 +129,8 @@ describe("Bladeburner Actions", () => {
         { major: SampleBlackOp, minor: SampleOperation },
         { major: SampleOperation, minor: SampleContract },
       ])("$major.type reward significantly more rank than $minor.type", ({ major, minor }) => {
-        guaranteeSuccess(), (beforeMinor = inst.rank), complete(minor), finish(), (minorGain = inst.rank - beforeMinor);
-        guaranteeSuccess(), (beforeMajor = inst.rank), complete(major), finish(), (majorGain = inst.rank - beforeMajor);
+        (beforeMinor = inst.rank), complete(minor, forceSuccess), (minorGain = inst.rank - beforeMinor);
+        (beforeMajor = inst.rank), complete(major, forceSuccess), (majorGain = inst.rank - beforeMajor);
         expect(majorGain).toBeGreaterThan(minorGain);
       });
     });
@@ -163,25 +141,25 @@ describe("Bladeburner Actions", () => {
 
       it("generates available contracts", () => {
         const { count } = inst.getActionObject(SampleContract);
-        guaranteeSuccess(), complete(Incite);
+        complete(Incite, forceSuccess);
         expect(inst.getActionObject(SampleContract).count).toBeGreaterThan(count);
       });
 
       it("generates available operations", () => {
         const { count } = inst.getActionObject(SampleOperation);
-        guaranteeSuccess(), complete(Incite);
+        complete(Incite, forceSuccess);
         expect(inst.getActionObject(SampleOperation).count).toBeGreaterThan(count);
       });
 
       /** Relates to all issues mentioned in PR-1586 */
       it.each(CITIES)("SIGNIFICANTLY increases chaos in all cities when chaos is LOW: %s", (city: CityName) => {
-        guaranteeSuccess(), ({ chaos } = inst.cities[city]), complete(Incite);
+        ({ chaos } = inst.cities[city]), complete(Incite, forceSuccess);
         expect(inst.cities[city].chaos).toBeGreaterThan(chaos * 2);
       });
 
       /** Relates to all issues mentioned in PR-1586 */
       it.each(CITIES)("MILDLY increases chaos in all cities when chaos is HIGH: %s", (city: CityName) => {
-        guaranteeSuccess(), allCitiesHighChaos(), ({ chaos } = inst.cities[city]), complete(Incite);
+        allCitiesHighChaos(), ({ chaos } = inst.cities[city]), complete(Incite, forceSuccess);
         expect(inst.cities[city].chaos).toBeGreaterThan(chaos * 1.05);
       });
     });
@@ -190,19 +168,19 @@ describe("Bladeburner Actions", () => {
       const Recruitment = GeneralAction.createId(BladeburnerGeneralActionName.Recruitment);
 
       it("awards charisma exp", () => {
-        guaranteeSuccess(), (before = Player.exp.charisma), complete(Recruitment);
+        (before = Player.exp.charisma), complete(Recruitment, forceSuccess);
         expect(Player.exp.charisma).toBeGreaterThan(before);
       });
 
       it("hires team member", () => {
-        guaranteeSuccess(), complete(Recruitment);
+        complete(Recruitment, forceSuccess);
         expect(inst.teamSize).toBeGreaterThan(0);
       });
     });
 
     describe.each([...actionId(contracts())])("$id.name", ({ id }) => {
       it("all contracts award money", () => {
-        guaranteeSuccess(), (before = Player.money), complete(id);
+        (before = Player.money), complete(id, forceSuccess);
         expect(Player.money).toBeGreaterThan(before);
       });
     });
@@ -211,7 +189,7 @@ describe("Bladeburner Actions", () => {
     /** Checking all of them to avoid regressions */
     describe.each([...actionIdWithIndividualStat(nonGeneralActions())])("$id.name", ({ id, stat }) => {
       it(`awards ${stat} exp`, () => {
-        guaranteeSuccess(), (before = Player.exp[stat]), complete(id);
+        (before = Player.exp[stat]), complete(id, forceSuccess);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
     });
@@ -222,7 +200,7 @@ describe("Bladeburner Actions", () => {
 
     describe.each([SampleOperation, SampleBlackOp])("operations and black operations decrease rank", (id) => {
       it(`${id.type}`, () => {
-        guaranteeFailure(), (before = inst.rank), complete(id);
+        (before = inst.rank), complete(id, forceFailure);
         expect(inst.rank).toBeLessThan(before);
       });
     });
@@ -248,6 +226,8 @@ describe("Bladeburner Actions", () => {
       inst = Player.bladeburner;
       inst.clearConsole();
     }
+
+    basicStats();
   });
 
   function initBladeburner(player: PlayerObject): player is PlayerObject & { bladeburner: Bladeburner } {
@@ -257,43 +237,14 @@ describe("Bladeburner Actions", () => {
 
   function basicStats() {
     inst.rank = 1;
-    inst.changeRank(Player, 10);
-    Player.gainStrengthExp(LOW_STAT_EXP);
-    Player.gainDefenseExp(LOW_STAT_EXP);
-    Player.gainAgilityExp(LOW_STAT_EXP);
-    Player.gainDexterityExp(LOW_STAT_EXP);
-
+    inst.changeRank(Player, 400e3);
+    Player.gainStrengthExp(BASE_STAT_EXP);
+    Player.gainDefenseExp(BASE_STAT_EXP);
+    Player.gainAgilityExp(BASE_STAT_EXP);
+    Player.gainDexterityExp(BASE_STAT_EXP);
     inst.calculateMaxStamina();
+
     inst.stamina = inst.maxStamina;
-
-    resetCity();
-  }
-
-  function guaranteeSuccess() {
-    inst.rank = 1;
-    inst.changeRank(Player, 1e10);
-
-    Player.gainStrengthExp(HIGH_STAT_EXP);
-    Player.gainDefenseExp(HIGH_STAT_EXP);
-    Player.gainAgilityExp(HIGH_STAT_EXP);
-    Player.gainDexterityExp(HIGH_STAT_EXP);
-    inst.setSkillLevel(BladeburnerSkillName.BladesIntuition, 1e12);
-    inst.setSkillLevel(BladeburnerSkillName.Cloak, 1e12);
-    inst.setSkillLevel(BladeburnerSkillName.DigitalObserver, 1e12);
-    inst.setSkillLevel(BladeburnerSkillName.Reaper, 1e12);
-
-    inst.calculateMaxStamina();
-    inst.stamina = inst.maxStamina;
-
-    resetCity();
-  }
-
-  function guaranteeFailure() {
-    inst.rank = 1;
-    inst.changeRank(Player, 400e3); // Minimum to attempt to fail hardest op
-    Player.gainAgilityExp(1e50);
-    inst.calculateMaxStamina();
-    inst.stamina = 0;
 
     resetCity();
   }
@@ -313,8 +264,20 @@ describe("Bladeburner Actions", () => {
     }
   }
 
-  function complete(id: ActionIdentifier) {
-    start(id), finish();
+  function complete(id: ActionIdentifier, modifySuccessRate?: typeof forceSuccess | typeof forceFailure) {
+    start(id);
+    if (modifySuccessRate) modifySuccessRate(id);
+    finish();
+  }
+
+  function forceSuccess(id: ActionIdentifier) {
+    const action = inst.getActionObject(id);
+    const success = jest.spyOn(action, "getSuccessChance");
+    success.mockReturnValueOnce(1);
+  }
+
+  function forceFailure() {
+    inst.stamina = 0;
   }
 
   function start(id: ActionIdentifier) {
