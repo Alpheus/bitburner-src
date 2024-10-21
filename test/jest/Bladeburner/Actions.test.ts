@@ -49,12 +49,14 @@ describe("Bladeburner Actions", () => {
       const train = GeneralAction.createId(BladeburnerGeneralActionName.Training);
 
       it("increases max stamina", () => {
-        (before = bb.maxStamina), complete(train);
+        before = bb.maxStamina;
+        complete(train);
         expect(bb.maxStamina).toBeGreaterThan(before);
       });
 
       it.each(<(keyof Skills)[]>["strength", "dexterity", "agility"])("awards %s exp", (stat: keyof Skills) => {
-        (before = Player.exp[stat]), complete(train);
+        before = Player.exp[stat];
+        complete(train);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
     });
@@ -63,12 +65,15 @@ describe("Bladeburner Actions", () => {
       const regen = GeneralAction.createId(BladeburnerGeneralActionName.HyperbolicRegen);
 
       it("heals the player", () => {
-        Player.takeDamage(Player.hp.max / 2), (before = Player.hp.current), complete(regen);
+        Player.takeDamage(Player.hp.max / 2);
+        before = Player.hp.current;
+        complete(regen);
         expect(Player.hp.current).toBeGreaterThan(before);
       });
 
       it("regains stamina", () => {
-        (bb.stamina = 0), complete(regen);
+        bb.stamina = 0;
+        complete(regen);
         expect(bb.stamina).toBeGreaterThan(0);
       });
     });
@@ -77,21 +82,26 @@ describe("Bladeburner Actions", () => {
       const diplomacy = GeneralAction.createId(BladeburnerGeneralActionName.Diplomacy);
 
       it("mildly reduces chaos in the current city", () => {
-        let chaos;
-        allCitiesHighChaos(), ({ chaos } = bb.getCurrentCity()), complete(diplomacy);
+        allCitiesHighChaos();
+        let { chaos } = bb.getCurrentCity();
+        complete(diplomacy);
         expect(bb.getCurrentCity().chaos).toBeGreaterThan(chaos * 0.9);
         expect(bb.getCurrentCity().chaos).toBeLessThan(chaos);
       });
 
       it("effect scales significantly with player charisma", () => {
-        Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(diplomacy);
+        Player.gainCharismaExp(1e500);
+        allCitiesHighChaos();
+        complete(diplomacy);
         expect(bb.getCurrentCity().chaos).toBe(0);
       });
 
       it("does NOT affect chaos in other cities", () => {
         const otherCity = <CityName>cities.find((c) => c !== bb.getCurrentCity().name);
         /** Testing against a guaranteed 0-chaos level of charisma */
-        Player.gainCharismaExp(1e500), allCitiesHighChaos(), complete(diplomacy);
+        Player.gainCharismaExp(1e500);
+        allCitiesHighChaos();
+        complete(diplomacy);
         expect(bb.cities[otherCity].chaos).toBeGreaterThan(0);
       });
     });
@@ -100,17 +110,21 @@ describe("Bladeburner Actions", () => {
       const fa = GeneralAction.createId(BladeburnerGeneralActionName.FieldAnalysis);
 
       it("improves population estimate", () => {
-        ({ pop, popEst: before } = bb.getCurrentCity()), complete(fa), ({ popEst: after } = bb.getCurrentCity());
+        ({ pop, popEst: before } = bb.getCurrentCity());
+        complete(fa);
+        ({ popEst: after } = bb.getCurrentCity());
         expect(Math.abs(after - pop)).toBeLessThan(Math.abs(before - pop));
       });
 
       it.each(<(keyof Skills)[]>["hacking", "charisma"])("awards %s exp", (stat: keyof Skills) => {
-        (before = Player.exp[stat]), complete(fa, forceSuccess);
+        before = Player.exp[stat];
+        complete(fa, forceSuccess);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
 
       it("provides a minor increase in rank", () => {
-        ({ rank: before } = bb), complete(fa, forceSuccess);
+        before = bb.rank;
+        complete(fa, forceSuccess);
         expect(bb.rank).toBeGreaterThan(before);
       });
     });
@@ -119,7 +133,8 @@ describe("Bladeburner Actions", () => {
       "non-general actions increase rank",
       (id) => {
         it(`${id.type}`, () => {
-          (before = bb.rank), complete(id, forceSuccess);
+          before = bb.rank;
+          complete(id, forceSuccess);
           expect(bb.rank).toBeGreaterThan(before);
         });
       },
@@ -132,8 +147,12 @@ describe("Bladeburner Actions", () => {
         { major: SampleBlackOp, minor: SampleOperation },
         { major: SampleOperation, minor: SampleContract },
       ])("$major.type reward significantly more rank than $minor.type", ({ major, minor }) => {
-        (beforeMinor = bb.rank), complete(minor, forceSuccess), (minorGain = bb.rank - beforeMinor);
-        (beforeMajor = bb.rank), complete(major, forceSuccess), (majorGain = bb.rank - beforeMajor);
+        beforeMinor = bb.rank;
+        complete(minor, forceSuccess);
+        minorGain = bb.rank - beforeMinor;
+        beforeMajor = bb.rank;
+        complete(major, forceSuccess);
+        majorGain = bb.rank - beforeMajor;
         expect(majorGain).toBeGreaterThan(minorGain);
       });
     });
@@ -159,7 +178,8 @@ describe("Bladeburner Actions", () => {
        * - having chaos rate affect only one city
        */
       it.each(cities)("SIGNIFICANTLY increases chaos in all cities when chaos is LOW: %s", (city: CityName) => {
-        ({ chaos } = bb.cities[city]), complete(iv, forceSuccess);
+        ({ chaos } = bb.cities[city]);
+        complete(iv, forceSuccess);
         expect(bb.cities[city].chaos).toBeGreaterThan(chaos * 2);
       });
 
@@ -168,7 +188,9 @@ describe("Bladeburner Actions", () => {
        * - having chaos rate affect only one city
        */
       it.each(cities)("MILDLY increases chaos in all cities when chaos is HIGH: %s", (city: CityName) => {
-        allCitiesHighChaos(), ({ chaos } = bb.cities[city]), complete(iv, forceSuccess);
+        allCitiesHighChaos();
+        ({ chaos } = bb.cities[city]);
+        complete(iv, forceSuccess);
         expect(bb.cities[city].chaos).toBeGreaterThan(chaos * 1.05);
       });
     });
@@ -177,7 +199,8 @@ describe("Bladeburner Actions", () => {
       const recruit = GeneralAction.createId(BladeburnerGeneralActionName.Recruitment);
 
       it("awards charisma exp", () => {
-        (before = Player.exp.charisma), complete(recruit, forceSuccess);
+        before = Player.exp.charisma;
+        complete(recruit, forceSuccess);
         expect(Player.exp.charisma).toBeGreaterThan(before);
       });
 
@@ -189,7 +212,8 @@ describe("Bladeburner Actions", () => {
 
     describe.each(contracts.map(({ id }) => ({ id })))("$id.name", ({ id }) => {
       it("all contracts award money", () => {
-        (before = Player.money), complete(id, forceSuccess);
+        before = Player.money;
+        complete(id, forceSuccess);
         expect(Player.money).toBeGreaterThan(before);
       });
     });
@@ -198,7 +222,8 @@ describe("Bladeburner Actions", () => {
     /** Checking all of them to avoid regressions */
     describe.each(nonGeneralActions.flatMap(actionIdWithIndividualStat))("$id.name", ({ id, stat }) => {
       it(`awards ${stat} exp`, () => {
-        (before = Player.exp[stat]), complete(id, forceSuccess);
+        before = Player.exp[stat];
+        complete(id, forceSuccess);
         expect(Player.exp[stat]).toBeGreaterThan(before);
       });
     });
@@ -209,7 +234,8 @@ describe("Bladeburner Actions", () => {
 
     describe.each([SampleOperation, SampleBlackOp])("operations and black operations decrease rank", (id) => {
       it(`${id.type}`, () => {
-        (before = bb.rank), complete(id, forceFailure);
+        before = bb.rank;
+        complete(id, forceFailure);
         expect(bb.rank).toBeLessThan(before);
       });
     });
